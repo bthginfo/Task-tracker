@@ -13,6 +13,7 @@ import { createTask, createTopic, db, deleteTask, deleteTopic, listTasks, listTo
 import { calendarImport, calendarInfo, calendars, connectGoogle, decrypt, disconnectGoogle, encrypt, oauthUrl, processQueue, queueAll, selectCalendar } from './calendar.ts';
 import { commitImport, previewFile } from './imports.ts';
 import { localDate, parseDictation } from './voice.ts';
+import { createTimeEntry, csvCell, deleteTimeEntry, exportColumns, exportRows, startTimer, stopAllTimers, stopTimer, timeExport, timeState, TimeConflictError, updateTimeEntry } from './time.ts';
 
 const app = express();
 if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
@@ -54,7 +55,25 @@ app.use('/api', (req, res, next) => { if (!authenticated(req)) return res.status
 app.use('/api', rateLimit({ windowMs: 60000, limit: 300, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'Zu viele Anfragen. Bitte kurz warten.' } }));
 app.use('/api', workspaceMiddleware);
 app.use('/api', (req, _res, next) => { if (!['GET','HEAD','OPTIONS'].includes(req.method)) transaction(pruneDeleted); next(); });
-app.get('/api/state', async (_req, res) => { await processQueue(); res.json({ tasks: listTasks(), topics: listTopics(), calendar: calendarInfo(), voice: { enhanced: Boolean(process.env.OPENAI_API_KEY) }, auth: { protected: Boolean(password) } }); });
+app.get('/api/state', async (_req, res) => { await processQueue(); res.json({ tasks: listTasks(), topics: listTopics(), calendar: calendarInfo(), voice: { enhanced: Boolean(process.env.OPENAI_API_KEY) }, auth: { protected: Boolean(password) }, time: timeState() }); });
+app.post('/api/time/start', (req,res) => { transaction(() => startTimer(req.body)); res.json(timeState()); });
+app.post('/api/time/stop', (req,res) => { transaction(() => stopTimer(req.body)); res.json(timeState()); });
+app.post('/api/time/stop-all', (req,res) => { transaction(() => stopAllTimers(req.body)); res.json(timeState()); });
+app.post('/api/time/entries', (req,res) => { transaction(() => createTimeEntry(req.body)); res.status(201).json(timeState()); });
+app.patch('/api/time/entries/:id', (req,res) => { transaction(() => updateTimeEntry(String(req.params.id),req.body)); res.json(timeState()); });
+app.delete('/api/time/entries/:id', (req,res) => { transaction(() => deleteTimeEntry(String(req.params.id),req.body)); res.json(timeState()); });
+app.get('/api/time/export', async (req,res) => {
+  const result = timeExport(req.query); const filename = `fokus-zeiten-${result.query.from}-${result.query.to}`;
+  if (result.query.format === 'json') return res.attachment(filename + '.json').json({version:1,...result});
+  const rows = exportRows(result);
+  if (result.query.format === 'csv') return res.attachment(filename + '.csv').type('text/csv; charset=utf-8').send('\uFEFF' + [exportColumns,...rows].map(row => row.map(csvCell).join(';')).join('\r\n'));
+  const {default: ExcelJS} = await import('exceljs'); const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Zeiten'); sheet.addRow(exportColumns); rows.forEach(row => sheet.addRow(row));
+  sheet.getRow(1).font = {bold:true}; sheet.views = [{state:'frozen',ySplit:1}];
+  sheet.columns.forEach((column,index) => { column.width = [14,24,40,30,23,23,21,20,45,14,20][index]; });
+  sheet.getColumn(7).numFmt = '0.000'; sheet.getColumn(8).numFmt = '0.000000';
+  res.attachment(filename + '.xlsx').type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(Buffer.from(await workbook.xlsx.writeBuffer()));
+});
 app.post('/api/tasks', async (req, res) => { const task = transaction(() => createTask(req.body)); await processQueue(); res.status(201).json(task); });
 app.patch('/api/tasks/:id', async (req, res) => { const task = transaction(() => updateTask(String(req.params.id), req.body)); await processQueue(); res.json(task); });
 app.delete('/api/tasks/:id', async (req, res) => { transaction(() => deleteTask(String(req.params.id))); await processQueue(); res.json({ ok: true }); });
@@ -80,7 +99,7 @@ app.post('/api/demo', (_req, res) => {
     createTask({ title: 'Projektordner aufräumen', topicId: atelier.id, dueDate: day(0), status: 'done', priority: 'low', calendarEnabled: false });
   }); res.json({ ok: true });
 });
-app.get('/api/export', (_req, res) => { res.attachment(`fokus-export-${localDate()}.json`).json({ version: 1, exportedAt: new Date().toISOString(), tasks: listTasks(), topics: listTopics() }); });
+app.get('/api/export', (_req, res) => { res.attachment(`fokus-export-${localDate()}.json`).json({ version: 2, exportedAt: new Date().toISOString(), tasks: listTasks(), topics: listTopics(), time: timeState() }); });
 const importUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024, files: 1, fields: 0 } });
 app.post('/api/import/preview', importUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Bitte eine Datei auswählen.' });
@@ -134,6 +153,7 @@ if (production && !process.env.VERCEL) {
 }
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Diese API-Adresse existiert nicht.' }));
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (error instanceof TimeConflictError) return res.status(409).json({error:error.message});
   if (error instanceof ZodError) return res.status(400).json({ error: error.issues.map(i => i.message).join(' ') });
   if (error instanceof multer.MulterError) return res.status(400).json({ error: error.code === 'LIMIT_FILE_SIZE' ? 'Die Datei ist zu groß. Bitte höchstens 4 MB hochladen.' : 'Die Datei konnte nicht hochgeladen werden.' });
   if (error instanceof SyntaxError && 'body' in error) return res.status(400).json({ error: 'Die Anfrage enthält ungültige Daten.' });

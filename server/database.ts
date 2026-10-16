@@ -9,11 +9,12 @@ import { neon } from '@neondatabase/serverless';
 const schema = `PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;
   CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, data TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0);
   CREATE TABLE IF NOT EXISTS topics (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS time_entries (id TEXT PRIMARY KEY, data TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS event_links (task_id TEXT NOT NULL, calendar_id TEXT NOT NULL, event_id TEXT NOT NULL, PRIMARY KEY(task_id, calendar_id));
   CREATE TABLE IF NOT EXISTS sync_jobs (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, calendar_id TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, attempts INTEGER NOT NULL DEFAULT 0, next_at INTEGER NOT NULL DEFAULT 0, error TEXT);
   PRAGMA user_version = 1;`;
-const tables = { tasks: ['id', 'data', 'deleted'], topics: ['id', 'data'], settings: ['key', 'value'], event_links: ['task_id', 'calendar_id', 'event_id'], sync_jobs: ['id', 'task_id', 'calendar_id', 'version', 'attempts', 'next_at', 'error'] } as const;
+const tables = { tasks: ['id', 'data', 'deleted'], topics: ['id', 'data'], time_entries: ['id', 'data'], settings: ['key', 'value'], event_links: ['task_id', 'calendar_id', 'event_id'], sync_jobs: ['id', 'task_id', 'calendar_id', 'version', 'attempts', 'next_at', 'error'] } as const;
 type Snapshot = Partial<Record<keyof typeof tables, Record<string, string | number | null>[]>>;
 const cloud = Boolean(process.env.DATABASE_URL);
 if (process.env.VERCEL && !cloud) throw new Error('DATABASE_URL is required on Vercel. Local files are not persistent.');
@@ -71,7 +72,7 @@ export const workspaceMiddleware: RequestHandler = async (req, res, next) => {
       const persist = modified !== original && res.statusCode < 400;
       const commit = async () => {
         if (persist) {
-          if (Buffer.byteLength(modified) > 5 * 1024 * 1024) throw new Error('Workspace zu groß. Bitte alte Aufgaben exportieren und aufräumen.');
+          if (Buffer.byteLength(modified) > 5 * 1024 * 1024) throw new Error('Workspace zu groß. Bitte ältere Aufgaben oder Zeiteinträge exportieren und aufräumen.');
           const updated = await sql.query(`UPDATE fokus_workspace SET payload=$1::jsonb,revision=revision+1,updated_at=now() WHERE id='mario' AND revision=$2 RETURNING revision`, [modified, String(row.revision)]);
           if (!updated.length) throw new Error('Zwischenzeitlich wurden Aufgaben in einem anderen Fenster geändert. Bitte erneut versuchen.');
         }

@@ -3,6 +3,7 @@ export { db } from './database.ts';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Task, TaskInput, Topic } from '../shared/types.ts';
+import { stopTimerForTask } from './time.ts';
 
 export function transaction<T>(fn: () => T): T {
   db.exec('BEGIN IMMEDIATE');
@@ -79,6 +80,7 @@ export function updateTask(id: string, input: TaskInput): Task {
   next.calendarSyncStatus = !next.calendarEnabled ? 'off' : next.dueDate ? 'pending' : 'waiting';
   next.calendarError = null;
   persistTask(next); scheduleTask(next);
+  if (patch.status === 'done') stopTimerForTask(id);
   const children = listTasks().filter(t => t.parentId === id);
   for (const child of children) {
     if (child.topicId !== next.topicId || (patch.status === 'done' && child.status !== 'done')) {
@@ -93,6 +95,7 @@ export function updateTask(id: string, input: TaskInput): Task {
 }
 export function deleteTask(id: string) {
   const task = findTask(id); if (!task) throw new Error('Aufgabe nicht gefunden.');
+  stopTimerForTask(id);
   for (const child of listTasks().filter(t => t.parentId === id)) deleteTask(child.id);
   persistTask({ ...task, updatedAt: new Date().toISOString() });
   db.prepare('UPDATE tasks SET deleted=1 WHERE id=?').run(id); scheduleTask(task);

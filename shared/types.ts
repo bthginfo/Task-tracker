@@ -11,7 +11,10 @@ export interface Task {
 }
 export type TaskInput = Partial<Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'calendarSyncStatus' | 'calendarError'>>;
 export interface CalendarInfo { configured: boolean; connected: boolean; email: string | null; calendarId: string; lastSyncedAt: string | null; error: string | null }
-export interface AppState { tasks: Task[]; topics: Topic[]; calendar: CalendarInfo; voice: { enhanced: boolean }; auth: { protected: boolean } }
+export interface TimeEntry { id: string; taskId: string; taskTitle: string; topicId: string | null; topicName: string | null; parentTitle: string | null; startedAt: string; endedAt: string; durationSeconds: number; notes: string; source: 'manual' | 'timer'; version: number; createdAt: string; updatedAt: string }
+export interface ActiveTimer { id: string; taskId: string; taskTitle: string; topicId: string | null; topicName: string | null; parentTitle: string | null; startedAt: string }
+export interface TimeState { entries: TimeEntry[]; activeTimers: ActiveTimer[]; timezone: string; serverNow: string }
+export interface AppState { tasks: Task[]; topics: Topic[]; calendar: CalendarInfo; voice: { enhanced: boolean }; auth: { protected: boolean }; time: TimeState }
 export interface CalendarOption { id: string; summary: string; primary?: boolean }
 export interface VoiceResult { text: string; original: string; suggested: { title: string; dueDate: string | null; time: string | null; priority: Priority; topicId: string | null } }
 export interface ImportRow { key:string; title:string; notes:string; dueDate:string|null; time:string|null; duration:number; status:Status; priority:Priority; topicName:string|null; duplicate:boolean; parentKey?:string|null }

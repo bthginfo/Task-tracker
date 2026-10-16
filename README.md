@@ -12,6 +12,7 @@ Ein persönlicher Workspace mit ruhigem Dark Mode, Themen für Kunden und Projek
 - Schreiben oder Diktieren mit bearbeitbarer Vorschau und vorsichtiger Fülllautbereinigung. Erkannte Termine und Themen bleiben prüfbar.
 - Google-Kalender-Verbindung mit Auswahl des Zielkalenders. Synchronisierung pro Aufgabe standardmäßig aktiv, einzeln abwählbar.
 - Import mit Vorschau und Auswahl aus Excel, CSV/TSV, JSON, ICS und dem Google-Kalender.
+- Zeiterfassung je Aufgabe und Unteraufgabe: manuelle Einträge, parallele Start/Stopp-Timer, nachträgliche Korrektur und Löschung; Auswertung nach Tag, Woche, Monat, Jahr und Zeitraum mit CSV-, Excel- und JSON-Export.
 - JSON-Export, Passwortschutz im produktiven Betrieb, keine Analytics oder Tracker.
 
 ## Lokal starten
@@ -91,6 +92,16 @@ Maximal 4 MB und 500 Einträge pro Import, maximal 100 Excel-Spalten. Bei mehrer
 Standardmäßig wird die browserabhängige deutsche Spracherkennung verwendet. Chrome und Edge bieten üblicherweise die beste Unterstützung; Verfügbarkeit und Verarbeitung hängen vom Browser ab. HTTPS oder localhost sowie Mikrofonfreigabe sind erforderlich. Die App weist vor der Aufnahme auf mögliche Verarbeitung durch den Browserdienst hin, zeigt den erkannten Text und speichert erst nach Marios Bestätigung. Fülllaute werden entfernt; bedeutungstragende Wörter und Verneinungen bleiben erhalten.
 
 Eine zusätzliche Transkription über OpenAI ist implementiert, **standardmäßig ausgeschaltet** und kann Kosten verursachen. Sie wird nur durch einen ausdrücklich gesetzten `OPENAI_API_KEY` und nach Zustimmung zur Audioübertragung verwendet. Für einen ausschließlich kostenlosen Betrieb diesen Schlüssel nicht setzen. Es gibt keine Audioaufbewahrung in Fokus.
+
+## Zeiterfassung und Auswertung
+
+Aufgaben und Unteraufgaben haben eine eigene Zeiterfassung. Manuelle Einträge enthalten Beginn, Ende und optionale Notiz; gespeicherte Einträge lassen sich ändern, einer anderen Aufgabe zuordnen und löschen. Die geplante Kalenderdauer bleibt unabhängig von der tatsächlich erfassten Arbeitszeit.
+
+Mehrere Timer können gleichzeitig laufen, höchstens einer pro Aufgabe und bis zu 20 im Workspace. Startzeit und Timerkennung werden dauerhaft gespeichert; die Anzeige berechnet die vergangene Zeit im Browser, auch nach Neuladen oder einer geschlossenen App. Es gibt keine sekundengenauen Serveraufrufe, Heartbeats oder Hintergrundjobs. Start, Stopp und Korrekturen schreiben nur bei Bedarf. „Alle stoppen“ beendet atomar die gerade angezeigten Timer. Erledigen oder Löschen einer Aufgabe beendet ihren Timer und gegebenenfalls die ihrer Unteraufgaben; historische Zeiteinträge bleiben erhalten.
+
+Die Auswertung und Exporte verwenden die Workspace-Zeitzone (`APP_TIMEZONE`, hier Europe/Paris). Einträge über Mitternacht werden auf ihre jeweiligen Tage aufgeteilt; Zeitumstellungen berücksichtigen tatsächliche 23- bzw. 25-Stunden-Tage. Parallel erfasste Zeiten werden addiert. Eine zusätzliche Summe ohne Überschneidungen zeigt die zusammengeführte Zeitspanne; sie ist entsprechend kleiner, wenn Timer parallel liefen. Laufende Timer werden getrennt gezeigt und erst nach dem Stoppen als abgeschlossene Zeit exportiert.
+
+CSV (UTF-8 mit BOM und Semikolon), XLSX und JSON lassen sich für den gewählten Zeitraum und die Aufgaben-/Themenfilter herunterladen. Grenzüberschreitende Einträge werden auf den Exportzeitraum zugeschnitten und nach Tagen aufgeteilt. CSV-Texte werden gegen Tabellenformel-Auswertung abgesichert. Der allgemeine JSON-Export enthält zusätzlich die Zeiteinträge und laufenden Timer; der bestehende Aufgabenimport übernimmt weiterhin Aufgaben und Themen, keine Zeiterfassung. Versionsprüfungen verhindern, dass eine veraltete Bearbeitung neuere Zeiteinträge überschreibt.
 
 ## Betrieb und Sicherung
 

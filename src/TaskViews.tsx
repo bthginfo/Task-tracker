@@ -3,6 +3,7 @@ import { ArrowRight, CalendarDays, Check, CheckCheck, ChevronLeft, ChevronRight,
 import type { Priority, Status, Task, Topic } from '../shared/types';
 import { dateFromKey, dateLabel, localDate } from './api';
 import { priorityLabels, statusLabels } from './TaskDrawer';
+import { TaskTimer } from './TimeTracking';
 
 export function TaskMeta({task, topics, showDate = true}:{task:Task; topics:Topic[]; showDate?:boolean}) {
   const topic = topics.find(item => item.id === task.topicId);
@@ -23,6 +24,7 @@ export function TaskList({tasks, allTasks, topics, today, onOpen, onToggle, busy
     return <article className={`task-row ${task.status === 'done' ? 'is-done' : ''}`} key={task.id}>
       <button className={`task-check ${task.status === 'done' ? 'checked' : task.status === 'in_progress' ? 'in-progress' : ''}`} onClick={() => onToggle(task)} disabled={busyId === task.id} aria-label={`${task.title} ${task.status === 'done' ? 'wieder öffnen' : 'erledigen'}`}>{task.status === 'done' && <Check size={12}/>}</button>
       <button className="task-row-body" onClick={() => onOpen(task)}><span className="task-row-title">{task.title}</span><TaskMeta task={task} topics={topics}/>{parent && <span className="parent-task-meta">Unteraufgabe von {parent.title}</span>}</button>
+      <TaskTimer task={task} compact/>
       {children.length > 0 && <button className="child-count" onClick={() => onOpen(task)} aria-label={`${children.filter(item => item.status === 'done').length} von ${children.length} Unteraufgaben erledigt`}><ListTree size={14}/>{children.filter(item => item.status === 'done').length}/{children.length}</button>}
       <span className={`row-status status-${task.status}`}><i/>{statusLabels[task.status]}</span>
       <span className={`sync-icon sync-${task.calendarSyncStatus}`} title={syncLabel(task)}>{task.calendarEnabled ? <Cloud size={14}/> : <CloudOff size={14}/>}</span>
@@ -41,7 +43,7 @@ export function BoardView({tasks, allTasks, topics, onOpen, onMove, onAdd}:{task
         const children = allTasks.filter(item => item.parentId === task.id);
         return <article draggable onDragStart={event => { event.dataTransfer.setData('text/plain',task.id); event.dataTransfer.effectAllowed = 'move'; }} className={`kanban-card ${task.status === 'done' ? 'is-done' : ''}`} key={task.id}>
           <button className="kanban-card-body" onClick={() => onOpen(task)}><span className="kanban-title">{task.title}</span>{task.notes && <p>{task.notes}</p>}<TaskMeta task={task} topics={topics}/></button>
-          <div className="kanban-card-footer"><span>{children.length > 0 && <><ListTree size={13}/>{children.filter(child => child.status === 'done').length}/{children.length}</>}</span><GripVertical size={14} aria-hidden="true"/></div>
+          <div className="kanban-card-footer"><span>{children.length > 0 && <><ListTree size={13}/>{children.filter(child => child.status === 'done').length}/{children.length}</>}</span><TaskTimer task={task} compact/><GripVertical size={14} aria-hidden="true"/></div>
         </article>;
       })}{!items.length && <div className="kanban-empty"><span>{status === 'done' ? 'Hier sammeln sich deine Erfolge.' : 'Platz für deinen nächsten Schritt.'}</span></div>}</div>
       <button className="board-add" onClick={() => onAdd(status)}><Plus size={15}/>Aufgabe hinzufügen</button>

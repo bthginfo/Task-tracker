@@ -1,10 +1,11 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 
-export function Overlay({title, children, onClose, drawer = false, className = ''}: {title:string; children:ReactNode; onClose:()=>void; drawer?:boolean; className?:string}) {
+export function Overlay({title, children, onClose, drawer = false, className = '', active = true}: {title:string; children:ReactNode; onClose:()=>void; drawer?:boolean; className?:string; active?:boolean}) {
   const panel = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose); onCloseRef.current = onClose;
   useEffect(() => {
+    if(!active)return;
     const previous = document.activeElement as HTMLElement | null;
     const element = panel.current;
     const timer = setTimeout(() => { const target = element?.querySelector<HTMLElement>('[data-autofocus]') || element?.querySelector<HTMLElement>('button, input, select, textarea, [tabindex="0"]'); target?.focus(); }, 40);
@@ -18,8 +19,8 @@ export function Overlay({title, children, onClose, drawer = false, className = '
     }
     document.addEventListener('keydown', trap);
     return () => { clearTimeout(timer); document.removeEventListener('keydown', trap); previous?.focus(); };
-  }, []);
-  return <div className={`overlay ${drawer ? 'drawer-overlay' : ''}`} onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><div ref={panel} role="dialog" aria-modal="true" aria-label={title} className={`${drawer ? 'drawer' : 'dialog'} ${className}`}><header className="dialog-heading"><h2>{title}</h2><button className="icon-button" onClick={onClose} aria-label="Schließen"><X size={19}/></button></header>{children}</div></div>;
+  }, [active]);
+  return <div className={`overlay ${drawer ? 'drawer-overlay' : ''}`} inert={!active} aria-hidden={!active||undefined} onMouseDown={event => { if (active&&event.target === event.currentTarget) onClose(); }}><div ref={panel} role="dialog" aria-modal={active?true:undefined} aria-label={title} className={`${drawer ? 'drawer' : 'dialog'} ${className}`}><header className="dialog-heading"><h2>{title}</h2><button className="icon-button" type="button" onClick={onClose} aria-label="Schließen"><X size={19}/></button></header>{children}</div></div>;
 }
 
 export function Spinner({label = 'Wird geladen'}:{label?:string}) { return <span className="spinner" role="status" aria-label={label}/>; }

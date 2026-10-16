@@ -87,11 +87,13 @@ export async function previewFile(buffer: Buffer, filename: string): Promise<Imp
   const source = filename.slice(0, 200);
   if (extension === '.json') {
     const json = JSON.parse(buffer.toString('utf8').replace(/^\uFEFF/, '')) as unknown;
-    const obj = json as { tasks?: Record<string, unknown>[]; topics?: { id: string; name: string }[] };
+    const obj = json as { tasks?: Record<string, unknown>[]; topics?: { id: string; name: string }[]; time?: { entries?: unknown[]; activeTimers?: unknown[] } };
     const records = Array.isArray(json) ? json : obj?.tasks;
     if (!Array.isArray(records)) throw new Error('JSON muss eine Aufgabenliste oder einen Fokus-Export mit „tasks“ enthalten.');
     const names = Object.fromEntries((Array.isArray(obj?.topics) ? obj.topics : []).map(t => [t.id, t.name]));
-    return rowsFromRecords(records, source, names);
+    const result = rowsFromRecords(records, source, names);
+    if ((Array.isArray(obj?.time?.entries) && obj.time.entries.length) || (Array.isArray(obj?.time?.activeTimers) && obj.time.activeTimers.length)) result.warnings.push('Dieser Export enthält Zeiterfassung. Der Aufgabenimport übernimmt nur Aufgaben und Themen; Zeiteinträge und laufende Timer werden nicht importiert.');
+    return result;
   }
   if (['.csv', '.tsv'].includes(extension)) {
     const text = buffer.toString('utf8');

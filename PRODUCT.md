@@ -10,6 +10,7 @@ Mario manages personal work and customer-related tasks.
 Capture tasks quickly by typing or dictation, organize them by optional topics, break them into subtasks and plan work across list, board and calendar views.
 ## Capabilities and Constraints
 German interface. Dark by default with light switch. Google Calendar synchronization is enabled by default for each task and can be disabled individually. Actual Google access requires OAuth consent and configured credentials. Voice input is reviewed before saving; filler removal must preserve meaning.
+Time tracking supports manual entries and several independent, durable timers (one per task), including subtasks. Reports split elapsed work by workspace-local dates and distinguish summed parallel work from overlap-free elapsed time. Entries remain editable/deletable and export as CSV, XLSX and JSON. Timer display never polls the server.
 ## Brand Commitments
 Modern Apple-like, polished SaaS usability. Working name Fokus is an implementation choice.
 ## Product Principles

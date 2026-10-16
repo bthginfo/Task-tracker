@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { ArrowRight, AudioLines, CalendarCheck2, CalendarDays, Check, CheckCheck, ChevronDown, ChevronRight, Circle, CircleHelp, Clock3, Command, Folder, FolderInput, Inbox, LayoutGrid, List, ListTodo, LogIn, Menu, Mic, Moon, MoreHorizontal, Plus, Search, Settings, SlidersHorizontal, Sparkles, Sun, Trash2, X } from 'lucide-react';
-import type { AppState, Priority, Status, Task, TaskInput, Topic, VoiceResult } from '../shared/types';
+import type { AppState, Priority, Status, Task, TaskInput, Topic, VoiceResult, TimeEntry, TimeState } from '../shared/types';
 import { api, ApiError, dateLabel, localDate } from './api';
 import { TaskDrawer, priorityLabels, statusLabels, type DraftRequest } from './TaskDrawer';
 import { BoardView, CalendarView, TaskList } from './TaskViews';
@@ -9,11 +9,14 @@ import { VoiceDialog } from './VoiceDialog';
 import { ImportDialog } from './ImportDialog';
 import { Overlay, Spinner } from './ui';
 import { applyAccent, readAccent, type AccentId } from './appearance';
+import { RunningTimers, TimeProvider, type TimeEditorRequest } from './TimeTracking';
+import { TimeEntryEditor } from './TimeEntryEditor';
+import { TimeReports } from './TimeReports';
 
-type Page = 'today' | 'all' | 'inbox' | 'planned' | 'done' | `topic:${string}`;
+type Page = 'today' | 'all' | 'inbox' | 'planned' | 'done' | 'time' | `topic:${string}`;
 type View = 'list' | 'board' | 'calendar';
 type Toast = {text:string; type:'success'|'error'};
-const navigation = [{id:'today',label:'Heute',icon:Sun},{id:'all',label:'Alle Aufgaben',icon:ListTodo},{id:'inbox',label:'Eingang',icon:Inbox},{id:'planned',label:'Geplant',icon:CalendarDays},{id:'done',label:'Erledigt',icon:CheckCheck}] as const;
+const navigation = [{id:'today',label:'Heute',icon:Sun},{id:'all',label:'Alle Aufgaben',icon:ListTodo},{id:'inbox',label:'Eingang',icon:Inbox},{id:'planned',label:'Geplant',icon:CalendarDays},{id:'done',label:'Erledigt',icon:CheckCheck},{id:'time',label:'Zeiterfassung',icon:Clock3}] as const;
 const topicColors = ['#a9c99a','#8ab8d9','#c2a2d9','#dfa18d','#d5bd79','#79c3b0','#dc9dbb','#a5adbd'];
 
 export default function App() {
@@ -44,14 +47,19 @@ export default function App() {
   const [quickText, setQuickText] = useState('');
   const [quickBusy, setQuickBusy] = useState(false);
   const [showCompleted, setShowCompleted] = useState(true);
+  const [timeEditor,setTimeEditor]=useState<TimeEditorRequest|null>(null);
+  const [timeEditorDirty,setTimeEditorDirty]=useState(false);
   const searchInput = useRef<HTMLInputElement>(null);
   const sidebar = useRef<HTMLElement>(null);
   const drawerKey = useRef(0);
-  const dirtyRef = useRef(false); dirtyRef.current = drawerDirty;
+  const dirtyRef = useRef(false); dirtyRef.current = drawerDirty||timeEditorDirty;
   const lastRefresh = useRef(0);
+  const timeMutationGeneration=useRef(0);
+  const refreshSerial=useRef(0);
   const refresh = useCallback(async () => {
-    try { const next = await api<AppState>('/state'); lastRefresh.current = Date.now(); setState(next); setLoadError(''); setAuthRequired(false); }
-    catch (cause) { if (cause instanceof ApiError && cause.status === 401) { setAuthRequired(true); setState(null); } else throw cause; }
+    const generation=timeMutationGeneration.current,serial=++refreshSerial.current;
+    try { const next = await api<AppState>('/state'); if(serial!==refreshSerial.current)return;lastRefresh.current = Date.now(); setState(previous=>generation!==timeMutationGeneration.current&&previous?{...next,time:previous.time}:next); setLoadError(''); setAuthRequired(false); }
+    catch (cause) { if(serial!==refreshSerial.current)return;if (cause instanceof ApiError && cause.status === 401) { setAuthRequired(true); setState(null); } else throw cause; }
   }, []);
   useEffect(() => { refresh().catch(cause => setLoadError(cause instanceof Error ? cause.message : 'Der Workspace konnte nicht geladen werden.')).finally(() => setLoading(false)); }, [refresh]);
   useEffect(() => { const query=window.matchMedia('(max-width: 760px)');const change=()=>setIsMobile(query.matches);query.addEventListener('change',change);return()=>query.removeEventListener('change',change); },[]);
@@ -77,7 +85,7 @@ export default function App() {
     function keyboard(event:KeyboardEvent) {
       const target = event.target as HTMLElement;
       if (target.closest('input, textarea, select, [contenteditable="true"]') || event.ctrlKey || event.metaKey || event.altKey) return;
-      if (drawer || settings || voice || topicDialog || shortcuts || importOpen || authRequired) return;
+      if (drawer || settings || voice || topicDialog || shortcuts || importOpen || timeEditor || authRequired) return;
       if (event.key.toLowerCase() === 'n') { event.preventDefault(); newTask(); }
       if (event.key === '/') { event.preventDefault(); if (window.innerWidth <= 760) setMobileNav(true); setTimeout(() => searchInput.current?.focus(),0); }
       if (event.key === '?') { event.preventDefault(); setShortcuts(true); }
@@ -122,6 +130,7 @@ export default function App() {
     inbox:baseTasks.filter(task => task.status !== 'done' && !task.topicId).length,
     planned:baseTasks.filter(task => task.status !== 'done' && !!task.dueDate).length,
     done:baseTasks.filter(task => task.status === 'done').length,
+    time:state?.time.activeTimers.length||0,
   };
   const pageLabel = search ? 'Suchergebnisse' : topic?.name || navigation.find(item => item.id === page)?.label || 'Aufgaben';
   const greeting = new Date().getHours() < 11 ? 'Guten Morgen' : new Date().getHours() < 18 ? 'Guten Tag' : 'Guten Abend';
@@ -131,13 +140,15 @@ export default function App() {
   const progressTasks = baseTasks.filter(task => task.dueDate === today);
   const completedToday = progressTasks.filter(task => task.status === 'done').length;
   const activeFilters = statusFilter !== 'all' || priorityFilter !== 'all' || !showCompleted;
-  const dialogOpen = !!(drawer||settings||voice||topicDialog||shortcuts||importOpen);
+  const dialogOpen = !!(drawer||settings||voice||topicDialog||shortcuts||importOpen||timeEditor);
   function openImport(){setSettings(false);setMobileNav(false);setImportOpen(true);}
+  function editTime(entry?:TimeEntry,taskId?:string){setTimeEditorDirty(false);setTimeEditor({entry,taskId,key:++drawerKey.current});}
+  const updateTime=useCallback((time:TimeState)=>{timeMutationGeneration.current++;setState(previous=>previous?{...previous,time}:previous);},[]);
 
   if (authRequired) return <LoginScreen onLogin={async () => { setLoading(true); try { await refresh(); } finally { setLoading(false); } }} theme={theme} onTheme={toggleTheme}/>;
   if (loading || !state) return <div className="loading-screen"><div className="brand-symbol"><Check size={26}/></div><h1>Fokus</h1>{loadError ? <><p className="inline-error" role="alert">{loadError}</p><button className="button primary" onClick={() => { setLoading(true); refresh().catch(cause => setLoadError(cause.message)).finally(() => setLoading(false)); }}>Erneut laden</button></> : <><Spinner/><p>Ein Moment für deinen Workspace …</p></>}</div>;
 
-  return <div className="app-shell">
+  return <TimeProvider state={state} onChange={updateTime} onRefresh={refresh} notify={notify} onEdit={editTime} onNewTask={()=>newTask()} onOpenTask={id=>{const task=state.tasks.find(item=>item.id===id);if(task)openTask(task);else navigate('time');}}><div className="app-shell">
     {mobileNav && <button className="mobile-nav-backdrop" onClick={() => setMobileNav(false)} aria-label="Navigation schließen"/>}
     <aside ref={sidebar} className={`sidebar ${mobileNav ? 'is-open' : ''}`} aria-label="Hauptnavigation" role={isMobile&&mobileNav?'dialog':undefined} aria-modal={isMobile&&mobileNav?true:undefined} inert={(isMobile&&!mobileNav)||dialogOpen}>
       <a className="brand" href="#" onClick={event => { event.preventDefault(); navigate('today'); }}><span className="brand-symbol"><Check size={23}/></span><span>Fokus<span className="brand-dot">.</span></span></a>
@@ -149,7 +160,7 @@ export default function App() {
     </aside>
     <div className="workspace-shell" inert={dialogOpen||(isMobile&&mobileNav)}>
       <header className="topbar"><div className="breadcrumbs"><button className="icon-button mobile-menu" aria-label="Navigation öffnen" onClick={() => setMobileNav(true)}><Menu size={20}/></button><span className="breadcrumb-home">Mein Workspace</span><ChevronRight size={13}/><span>{pageLabel}</span></div><div className="topbar-actions"><span className="live-date">{new Date().toLocaleDateString('de-DE',{weekday:'short',day:'numeric',month:'short'})}</span><button className="icon-button theme-button" onClick={toggleTheme} aria-label={`Zum ${theme === 'dark' ? 'hellen' : 'dunklen'} Design wechseln`} title={`Zum ${theme === 'dark' ? 'hellen' : 'dunklen'} Design wechseln`}>{theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}</button><span className="avatar small" aria-label="Mario">M</span></div></header>
-      <div className="workspace-content"><main className="main-workspace" id="main-content">
+      <RunningTimers/><div className="workspace-content"><main className={`main-workspace ${page === 'time' && !search ? 'reports-workspace' : ''}`} id="main-content">{page === 'time' && !search ? <TimeReports topics={state.topics}/> : <>
         <header className="page-header"><div><h1>{title}</h1><p>{search ? `${visibleTasks.length} ${visibleTasks.length === 1 ? 'Aufgabe gefunden' : 'Aufgaben gefunden'}.` : topic ? 'Ein Thema. Alle nächsten Schritte im Blick.' : descriptions[page]}</p></div><button className="button primary new-task-button" aria-label="Neue Aufgabe" onClick={() => newTask()}><Plus size={17}/><span>Neue Aufgabe</span><kbd>N</kbd></button></header>
         {page === 'today' && !search && <div className="daily-overview"><div className="daily-date"><CalendarDays size={16}/><span>{new Date().toLocaleDateString('de-DE',{weekday:'long',day:'numeric',month:'long'})}</span></div>{progressTasks.length > 0 ? <div className="daily-progress"><span><strong>{completedToday}</strong> von {progressTasks.length} erledigt</span><div className="progress-track"><span style={{width:`${completedToday / progressTasks.length * 100}%`}}/></div></div> : <span className="daily-note">Dein Tag, in deinem Tempo.</span>}</div>}
         <form className="quick-capture" onSubmit={quickCreate}><Plus size={19}/><input placeholder="Eine Aufgabe, ein Gedanke …" aria-label="Aufgabe in natürlicher Sprache erfassen" value={quickText} onChange={event => setQuickText(event.target.value)} maxLength={2000}/><span className="quick-hint">z. B. morgen um 10</span><button type="button" className="icon-button capture-mic" aria-label="Aufgabe diktieren" title="Aufgabe diktieren" onClick={() => setVoice(true)}><Mic size={18}/></button>{quickText.trim() && <button className="quick-submit icon-button" type="submit" disabled={quickBusy} aria-label="Aufgabe prüfen">{quickBusy ? <Spinner/> : <ArrowRight size={18}/>}</button>}</form>
@@ -157,18 +168,19 @@ export default function App() {
         {showFilters && <div className="filters-row"><label>Status<select value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="all">Alle Status</option>{Object.entries(statusLabels).map(([key,value]) => <option key={key} value={key}>{value}</option>)}</select></label><label>Priorität<select value={priorityFilter} onChange={event => setPriorityFilter(event.target.value)}><option value="all">Alle Prioritäten</option>{Object.entries(priorityLabels).map(([key,value]) => <option key={key} value={key}>{value}</option>)}</select></label>{page !== 'done' && <label className="completed-filter"><input type="checkbox" checked={showCompleted} onChange={event => setShowCompleted(event.target.checked)}/>Erledigte zeigen</label>}{activeFilters && <button className="text-button" onClick={() => { setStatusFilter('all'); setPriorityFilter('all'); setShowCompleted(true); }}>Zurücksetzen</button>}</div>}
         {initialEmpty ? <WelcomeEmpty onAdd={() => newTask()} onDemo={() => void loadDemo()} demoBusy={demoBusy}/> : !visibleTasks.length && view !== 'calendar' && view !== 'board' ? <div className="empty-results"><div className="empty-result-icon">{page === 'done' ? <CheckCheck size={29}/> : search || activeFilters ? <Search size={28}/> : <Check size={28}/>}</div><h2>{search || activeFilters ? 'Hier ist gerade nichts zu finden.' : page === 'done' ? 'Dein erster Haken wartet schon.' : page === 'today' ? 'Heute ist noch Platz.' : 'Platz für deinen nächsten Schritt.'}</h2><p>{search || activeFilters ? 'Versuche einen anderen Suchbegriff oder passe deine Filter an.' : page === 'done' ? 'Sobald du eine Aufgabe erledigst, findest du sie hier.' : page === 'today' ? 'Gib deinem Tag einen Fokus und plane deine erste Aufgabe.' : 'Halte fest, was du erledigen möchtest.'}</p>{search || activeFilters ? <button className="button secondary" onClick={() => { setSearch(''); setStatusFilter('all'); setPriorityFilter('all'); setShowCompleted(true); }}>Suche & Filter zurücksetzen</button> : page !== 'done' && <button className="button secondary" onClick={() => newTask()}><Plus size={16}/>Aufgabe anlegen</button>}</div> : view === 'list' ? <TaskList tasks={visibleTasks} allTasks={state.tasks} topics={state.topics} today={page === 'today' && !search} onOpen={openTask} onToggle={task => void mutateTask(task.id,{status:task.status === 'done' ? 'todo' : 'done'})} busyId={busyId}/> : view === 'board' ? <BoardView tasks={visibleTasks} allTasks={state.tasks} topics={state.topics} onOpen={openTask} onMove={(id,status) => void mutateTask(id,{status})} onAdd={status => newTask({status})}/> : <CalendarView tasks={visibleTasks} topics={state.topics} onOpen={openTask} onAdd={date => newTask({dueDate:date})} onList={() => setView('list')}/>}
         {!initialEmpty && visibleTasks.length > 0 && view === 'list' && <button className="list-add-task" onClick={() => newTask()}><Plus size={16}/>Aufgabe hinzufügen<span>N</span></button>}
-        <div className="workspace-footnote"><span>Alles Wichtige hat seinen Platz.</span><button onClick={() => setShortcuts(true)}><Command size={12}/>Tastenkürzel</button></div>
+        </>}<div className="workspace-footnote"><span>Alles Wichtige hat seinen Platz.</span><button onClick={() => setShortcuts(true)}><Command size={12}/>Tastenkürzel</button></div>
       </main>
-      <Agenda state={state} onOpen={openTask} onSettings={() => setSettings(true)} onAdd={() => newTask({dueDate:today})}/></div>
+      {!(page === 'time' && !search) && <Agenda state={state} onOpen={openTask} onSettings={() => setSettings(true)} onAdd={() => newTask({dueDate:today})}/>}</div>
     </div>
-    {drawer && <TaskDrawer key={drawer.key} request={drawer} state={state} onClose={closeDrawer} onDirty={setDrawerDirty} onSaved={() => { setDrawer(null); setDrawerDirty(false); void refresh().catch(cause => notify(cause.message,'error')); notify(drawer.task ? 'Änderungen gespeichert.' : 'Aufgabe angelegt. Ein Gedanke weniger im Kopf.'); }} onDeleted={() => { setDrawer(null); setDrawerDirty(false); void refresh().catch(cause => notify(cause.message,'error')); notify('Aufgabe gelöscht.'); }}/>}
+    {drawer && <TaskDrawer key={drawer.key} request={drawer} state={state} blocked={!!timeEditor} onClose={closeDrawer} onDirty={setDrawerDirty} onSaved={() => { setDrawer(null); setDrawerDirty(false); void refresh().catch(cause => notify(cause.message,'error')); notify(drawer.task ? 'Änderungen gespeichert.' : 'Aufgabe angelegt. Ein Gedanke weniger im Kopf.'); }} onDeleted={() => { setDrawer(null); setDrawerDirty(false); void refresh().catch(cause => notify(cause.message,'error')); notify('Aufgabe gelöscht.'); }}/>}
+    {timeEditor && <TimeEntryEditor key={timeEditor.key} request={timeEditor} onDirty={setTimeEditorDirty} onClose={()=>{setTimeEditor(null);setTimeEditorDirty(false);}} onSaved={()=>{setTimeEditor(null);setTimeEditorDirty(false);notify('Zeit gespeichert.');}}/>}
     {settings && <SettingsDialog state={state} theme={theme} onTheme={toggleTheme} accent={accent} onAccent={setAccent} onClose={() => setSettings(false)} onRefresh={refresh} onLogout={() => void logout()} onImport={openImport}/>}
     {importOpen && <ImportDialog state={state} onClose={()=>setImportOpen(false)} onCalendarSettings={()=>{setImportOpen(false);setSettings(true);}} onImported={async(count,skipped)=>{setImportOpen(false);navigate('all');try{await refresh();notify(`${count} ${count===1?'Aufgabe übernommen':'Aufgaben übernommen'}.${skipped?` ${skipped} bereits vorhandene übersprungen.`:''}`);}catch(cause){notify(`Import gespeichert. ${cause instanceof Error?cause.message:'Bitte lade den Workspace erneut.'}`,'error');}}}/>}
     {voice && <VoiceDialog enhanced={state.voice.enhanced} onClose={() => setVoice(false)} onWrite={() => { setVoice(false); newTask(); }} onResult={result => { setVoice(false); setDrawerDirty(false); setDrawer({initial:{...result.suggested,dueDate:result.suggested.dueDate || (page === 'today' ? today : null)},voice:result,key:++drawerKey.current}); }}/>} 
     {topicDialog && <TopicDialog topic={topicDialog === 'new' ? undefined : topicDialog} onClose={() => setTopicDialog(null)} onSaved={async (deleted) => { if (deleted && topic && topicDialog !== 'new' && topicDialog.id === topic.id) navigate('inbox'); setTopicDialog(null); await refresh(); notify(deleted ? 'Thema gelöscht. Die Aufgaben bleiben im Eingang.' : 'Thema gespeichert.'); }}/>} 
     {shortcuts && <Overlay title="Kleine Helfer für deinen Fokus" onClose={() => setShortcuts(false)} className="shortcuts-dialog"><div className="shortcuts-content"><p>Ein paar Tasten. Ein bisschen weniger Klicken.</p><dl><div><dt>Neue Aufgabe</dt><dd><kbd>N</kbd></dd></div><div><dt>Aufgaben durchsuchen</dt><dd><kbd>/</kbd></dd></div><div><dt>Aufgabe speichern</dt><dd><kbd>Strg / ⌘</kbd><kbd>Enter</kbd></dd></div><div><dt>Ansicht schließen</dt><dd><kbd>Esc</kbd></dd></div><div><dt>Diese Hilfe öffnen</dt><dd><kbd>?</kbd></dd></div></dl><div className="shortcut-tip"><AudioLines size={19}/><p>Du kannst Aufgaben auch diktieren. Klicke dafür auf das Mikrofon in der Eingabezeile. Vor dem Speichern kannst du alles prüfen.</p></div></div></Overlay>}
     {toast && <div className={`toast ${toast.type}`} role={toast.type === 'error' ? 'alert' : 'status'}>{toast.type === 'success' ? <Check size={17}/> : <CircleHelp size={17}/>}<span>{toast.text}</span><button className="icon-button" aria-label="Hinweis schließen" onClick={() => setToast(null)}><X size={15}/></button></div>}
-  </div>;
+  </div></TimeProvider>;
 }
 
 function WelcomeEmpty({onAdd,onDemo,demoBusy}:{onAdd:()=>void; onDemo:()=>void; demoBusy:boolean}) {
