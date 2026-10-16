@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import type { VoiceResult } from '../shared/types';
+import { mobileSpeechService, speechTranscript, type RecognitionResults } from './speechTranscript';
 
-type RecognitionEvent = { results: {length:number; [index:number]: {isFinal:boolean; [index:number]: {transcript:string}}} };
+type RecognitionEvent = { resultIndex: number; results: RecognitionResults };
 type Recognition = { lang:string; continuous:boolean; interimResults:boolean; onresult:((event:RecognitionEvent)=>void)|null; onerror:((event:{error:string})=>void)|null; onend:(()=>void)|null; start:()=>void; stop:()=>void; abort:()=>void };
 type RecognitionClass = new()=>Recognition;
 type Phase = 'ready' | 'recording' | 'captured' | 'processing' | 'error';
@@ -53,7 +54,7 @@ export function useVoiceCapture(enhanced: boolean, onResult: (result: VoiceResul
     stopTimers(); requested.current = send;
     if (send) setPhase('processing');
     if (recorder.current && recorder.current.state !== 'inactive') recorder.current.stop();
-    else if (recognition.current) { const current = recognition.current; recognition.current = null; try { current.stop(); } catch { if (send) void process(); else setPhase('captured'); } }
+    else if (recognition.current) { const current = recognition.current; try { current.stop(); } catch { recognition.current = null; if (send) void process(); else setPhase('captured'); } }
     else if (send) void process(blob.current || undefined);
     else { stopTracks(); setPhase('captured'); }
   }
@@ -75,10 +76,13 @@ export function useVoiceCapture(enhanced: boolean, onResult: (result: VoiceResul
         mediaRecorder.onstop = () => { stopTracks(); stopTimers(); if (current !== session.current || cancelled.current) return; const audio = new Blob(chunks, {type: mediaRecorder.mimeType}); blob.current = audio; recorder.current = null; if (requested.current) void process(audio); else setPhase('captured'); };
         mediaRecorder.start();
       } else {
-        const rec = new Ctor!(); recognition.current = rec; rec.lang = 'de-DE'; rec.continuous = true; rec.interimResults = true;
-        rec.onresult = event => { let result = ''; for (let i = 0; i < event.results.length; i++) result += `${event.results[i][0].transcript} `; text.current = result.trim(); setTranscript(text.current); };
-        rec.onerror = event => { stopTimers(); recognition.current = null; if (cancelled.current || current !== session.current || event.error === 'aborted') return; const errors:Record<string,string> = {'not-allowed':'Der Mikrofonzugriff wurde abgelehnt. Erlaube ihn in den Browser-Einstellungen oder schreibe deine Aufgabe.', 'audio-capture':'Es wurde kein Mikrofon gefunden. Prüfe dein Mikrofon oder schreibe deine Aufgabe.', 'no-speech':'Es wurde keine Sprache erkannt. Versuche es erneut oder schreibe deine Aufgabe.', 'network':'Der Sprachdienst ist gerade nicht erreichbar. Prüfe deine Verbindung oder schreibe deine Aufgabe.'}; setError(errors[event.error] || 'Das Diktieren wurde unterbrochen. Versuche es erneut.'); setPhase('error'); };
-        rec.onend = () => { recognition.current = null; stopTimers(); if (cancelled.current || current !== session.current) return; if (requested.current) void process(); else setPhase(previous => previous === 'error' ? previous : 'captured'); };
+        const rec = new Ctor!(); recognition.current = rec; rec.lang = 'de-DE'; rec.continuous = true;
+        // Mobile services can emit provisional hypotheses as separate final
+        // results. Ask for settled phrases there; desktop retains live previews.
+        rec.interimResults = !mobileSpeechService(navigator);
+        rec.onresult = event => { if (cancelled.current || current !== session.current) return; text.current = speechTranscript(event.results); setTranscript(text.current); };
+        rec.onerror = event => { if (cancelled.current || current !== session.current) return; stopTimers(); if (event.error === 'aborted') return; const errors:Record<string,string> = {'not-allowed':'Der Mikrofonzugriff wurde abgelehnt. Erlaube ihn in den Browser-Einstellungen oder schreibe deine Aufgabe.', 'audio-capture':'Es wurde kein Mikrofon gefunden. Prüfe dein Mikrofon oder schreibe deine Aufgabe.', 'no-speech':'Es wurde keine Sprache erkannt. Versuche es erneut oder schreibe deine Aufgabe.', 'network':'Der Sprachdienst ist gerade nicht erreichbar. Prüfe deine Verbindung oder schreibe deine Aufgabe.'}; setError(errors[event.error] || 'Das Diktieren wurde unterbrochen. Versuche es erneut.'); setPhase('error'); };
+        rec.onend = () => { if (cancelled.current || current !== session.current) return; rec.onresult = null; rec.onend = null; rec.onerror = null; recognition.current = null; stopTimers(); if (requested.current) void process(); else setPhase(previous => previous === 'error' ? previous : 'captured'); };
         rec.start();
       }
       setPhase('recording'); timer.current = setInterval(() => setSeconds(value => value + 1), 1000); limit.current = setTimeout(() => endCapture(false), 90000);
