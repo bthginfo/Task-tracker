@@ -81,7 +81,8 @@ export function stopAllTimers(input: unknown) { const {timerIds} = z.object({tim
 export function stopTimerForTask(taskId: string) { const timers = activeTimers().filter(timer => timer.taskId === taskId); if (timers.length) finishTimers(timers.map(timer => timer.id)); }
 
 export function timeExport(input: unknown) {
-  const query = z.object({ format: z.enum(['csv','xlsx','json']), from: date, to: date, topicId: z.union([uuid,z.literal('none')]).optional(), taskId: uuid.optional() }).strict().parse(input);
+  // Vercel attaches its internal rewrite "path" parameter; only export filters are consumed.
+  const query = z.object({ format: z.enum(['csv','xlsx','json']), from: date, to: date, topicId: z.union([uuid,z.literal('none')]).optional(), taskId: uuid.optional() }).strip().parse(input);
   const days = (Date.parse(query.to) - Date.parse(query.from)) / 86400000;
   if (days < 0 || days > 3660) throw new Error('Bitte einen Zeitraum von höchstens zehn Jahren auswählen.');
   const entries = listTimeEntries().filter(entry => (!query.taskId || entry.taskId === query.taskId) && (!query.topicId || (query.topicId === 'none' ? !entry.topicId : entry.topicId === query.topicId)));

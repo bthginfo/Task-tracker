@@ -26,7 +26,7 @@ test('authenticated API persists parallel timers, editable time and all export f
   const patch={taskId:a.id,startedAt:input.startedAt,endedAt:'2026-10-16T00:00:00Z',notes:'Korrigiert',version:entry.version};
   assert.equal((await request('/api/time/entries/'+entry.id,'PATCH',patch)).status,200);
   assert.equal((await request('/api/time/entries/'+entry.id,'PATCH',patch)).status,409);
-  const range='/api/time/export?from=2026-10-16&to=2026-10-16&taskId='+a.id+'&format=';
+  const range='/api/time/export?path=time%2Fexport&from=2026-10-16&to=2026-10-16&taskId='+a.id+'&format=';
   const csv=await request(range+'csv'); assert.equal(csv.status,200); assert.match(csv.headers.get('content-disposition')!,/attachment/);const text=await csv.text();assert.ok(text.includes("'=SUM(1,2)"));assert.ok(text.includes('7200'));
   const json=await(await request(range+'json')).json(); assert.ok(json.totalSeconds>=7200);assert.ok(json.segments.some((value:{entry:{id:string}})=>value.entry.id===entry.id));
   const spreadsheet=await request(range+'xlsx');assert.equal(spreadsheet.status,200);const bytes=Buffer.from(await spreadsheet.arrayBuffer());assert.equal(bytes.readUInt16LE(0),0x4b50);
