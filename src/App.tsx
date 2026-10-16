@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { ArrowRight, AudioLines, CalendarCheck2, CalendarDays, Check, CheckCheck, ChevronDown, ChevronRight, Circle, CircleHelp, Clock3, Command, Folder, FolderInput, Inbox, LayoutGrid, List, ListTodo, LogIn, Menu, Mic, Moon, MoreHorizontal, Plus, Search, Settings, SlidersHorizontal, Sparkles, Sun, Trash2, X } from 'lucide-react';
 import type { AppState, Priority, Status, Task, TaskInput, Topic, VoiceResult } from '../shared/types';
 import { api, ApiError, dateLabel, localDate } from './api';
@@ -8,6 +8,7 @@ import { SettingsDialog } from './SettingsDialog';
 import { VoiceDialog } from './VoiceDialog';
 import { ImportDialog } from './ImportDialog';
 import { Overlay, Spinner } from './ui';
+import { applyAccent, readAccent, type AccentId } from './appearance';
 
 type Page = 'today' | 'all' | 'inbox' | 'planned' | 'done' | `topic:${string}`;
 type View = 'list' | 'board' | 'calendar';
@@ -22,6 +23,7 @@ export default function App() {
   const [loadError, setLoadError] = useState('');
   const [page, setPage] = useState<Page>('today');
   const [theme, setTheme] = useState(() => { try { return localStorage.getItem('fokus-theme') === 'light' ? 'light' : 'dark'; } catch { return 'dark'; } });
+  const [accent, setAccent] = useState<AccentId>(readAccent);
   const [view, setView] = useState<View>(() => { try { const stored = localStorage.getItem('fokus-view'); return stored === 'board' || stored === 'calendar' ? stored : 'list'; } catch { return 'list'; } });
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -54,7 +56,7 @@ export default function App() {
   useEffect(() => { refresh().catch(cause => setLoadError(cause instanceof Error ? cause.message : 'Der Workspace konnte nicht geladen werden.')).finally(() => setLoading(false)); }, [refresh]);
   useEffect(() => { const query=window.matchMedia('(max-width: 760px)');const change=()=>setIsMobile(query.matches);query.addEventListener('change',change);return()=>query.removeEventListener('change',change); },[]);
   useEffect(() => { if(!isMobile||!mobileNav)return;const previous=document.activeElement as HTMLElement|null;const element=sidebar.current;const timer=setTimeout(()=>element?.querySelector<HTMLElement>('button,input,a')?.focus(),30);function trap(event:KeyboardEvent){if(event.key==='Escape'){event.preventDefault();setMobileNav(false);}if(event.key!=='Tab')return;const items=Array.from(element?.querySelectorAll<HTMLElement>('button,input,a[href]')||[]).filter(item=>!item.hasAttribute('disabled')&&item.getClientRects().length);const first=items[0],last=items[items.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}document.addEventListener('keydown',trap);return()=>{clearTimeout(timer);document.removeEventListener('keydown',trap);previous?.focus();}; },[isMobile,mobileNav]);
-  useEffect(() => { document.documentElement.dataset.theme = theme; document.documentElement.style.colorScheme = theme; try { localStorage.setItem('fokus-theme',theme); } catch { /* preferences unavailable */ } }, [theme]);
+  useLayoutEffect(() => { document.documentElement.dataset.theme = theme; document.documentElement.style.colorScheme = theme; applyAccent(accent, theme); try { localStorage.setItem('fokus-theme',theme); } catch { /* preferences unavailable */ } }, [theme, accent]);
   useEffect(() => { try { localStorage.setItem('fokus-view',view); } catch { /* preferences unavailable */ } }, [view]);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(null),toast.type === 'error' ? 8000 : 3500); return () => clearTimeout(timer); }, [toast]);
   useEffect(() => { function onFocus() { if (!dirtyRef.current && !document.hidden && navigator.onLine && Date.now() - lastRefresh.current >= 60000) void refresh().catch(cause => setToast({text:cause instanceof Error ? cause.message : 'Der Workspace konnte nicht aktualisiert werden.',type:'error'})); } window.addEventListener('focus',onFocus); document.addEventListener('visibilitychange',onFocus); window.addEventListener('online',onFocus); return () => { window.removeEventListener('focus',onFocus); document.removeEventListener('visibilitychange',onFocus); window.removeEventListener('online',onFocus); }; }, [refresh]);
@@ -160,7 +162,7 @@ export default function App() {
       <Agenda state={state} onOpen={openTask} onSettings={() => setSettings(true)} onAdd={() => newTask({dueDate:today})}/></div>
     </div>
     {drawer && <TaskDrawer key={drawer.key} request={drawer} state={state} onClose={closeDrawer} onDirty={setDrawerDirty} onSaved={() => { setDrawer(null); setDrawerDirty(false); void refresh().catch(cause => notify(cause.message,'error')); notify(drawer.task ? 'Änderungen gespeichert.' : 'Aufgabe angelegt. Ein Gedanke weniger im Kopf.'); }} onDeleted={() => { setDrawer(null); setDrawerDirty(false); void refresh().catch(cause => notify(cause.message,'error')); notify('Aufgabe gelöscht.'); }}/>}
-    {settings && <SettingsDialog state={state} theme={theme} onTheme={toggleTheme} onClose={() => setSettings(false)} onRefresh={refresh} onLogout={() => void logout()} onImport={openImport}/>}
+    {settings && <SettingsDialog state={state} theme={theme} onTheme={toggleTheme} accent={accent} onAccent={setAccent} onClose={() => setSettings(false)} onRefresh={refresh} onLogout={() => void logout()} onImport={openImport}/>}
     {importOpen && <ImportDialog state={state} onClose={()=>setImportOpen(false)} onCalendarSettings={()=>{setImportOpen(false);setSettings(true);}} onImported={async(count,skipped)=>{setImportOpen(false);navigate('all');try{await refresh();notify(`${count} ${count===1?'Aufgabe übernommen':'Aufgaben übernommen'}.${skipped?` ${skipped} bereits vorhandene übersprungen.`:''}`);}catch(cause){notify(`Import gespeichert. ${cause instanceof Error?cause.message:'Bitte lade den Workspace erneut.'}`,'error');}}}/>}
     {voice && <VoiceDialog enhanced={state.voice.enhanced} onClose={() => setVoice(false)} onWrite={() => { setVoice(false); newTask(); }} onResult={result => { setVoice(false); setDrawerDirty(false); setDrawer({initial:{...result.suggested,dueDate:result.suggested.dueDate || (page === 'today' ? today : null)},voice:result,key:++drawerKey.current}); }}/>} 
     {topicDialog && <TopicDialog topic={topicDialog === 'new' ? undefined : topicDialog} onClose={() => setTopicDialog(null)} onSaved={async (deleted) => { if (deleted && topic && topicDialog !== 'new' && topicDialog.id === topic.id) navigate('inbox'); setTopicDialog(null); await refresh(); notify(deleted ? 'Thema gelöscht. Die Aufgaben bleiben im Eingang.' : 'Thema gespeichert.'); }}/>} 

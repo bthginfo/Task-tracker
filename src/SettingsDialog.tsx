@@ -3,8 +3,9 @@ import { ArrowDownToLine, ArrowUpRight, CalendarCheck2, Check, CloudOff, Externa
 import type { AppState, CalendarOption } from '../shared/types';
 import { api } from './api';
 import { Overlay, Spinner } from './ui';
+import { accentPalettes, type AccentId } from './appearance';
 
-export function SettingsDialog({state, theme, onTheme, onClose, onRefresh, onLogout,onImport}:{state:AppState; theme:string; onTheme:()=>void; onClose:()=>void; onRefresh:()=>Promise<void>; onLogout:()=>void;onImport:()=>void}) {
+export function SettingsDialog({state, theme, onTheme, accent, onAccent, onClose, onRefresh, onLogout,onImport}:{state:AppState; theme:string; onTheme:()=>void; accent:AccentId; onAccent:(id:AccentId)=>void; onClose:()=>void; onRefresh:()=>Promise<void>; onLogout:()=>void;onImport:()=>void}) {
   const [tab, setTab] = useState('calendar');
   const [calendars, setCalendars] = useState<CalendarOption[]>([]);
   const [calendarId, setCalendarId] = useState(state.calendar.calendarId);
@@ -50,6 +51,14 @@ export function SettingsDialog({state, theme, onTheme, onClose, onRefresh, onLog
       </> : <>
         <h3 className="settings-section-heading">So, wie du am liebsten arbeitest.</h3>
         <div className="settings-row"><div><strong>Erscheinungsbild</strong><p>{theme === 'dark' ? 'Dunkel, ruhig und fokussiert.' : 'Hell, klar und aufgeräumt.'}</p></div><button className="button secondary compact" onClick={onTheme}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}Zu {theme === 'dark' ? 'Hell' : 'Dunkel'} wechseln</button></div>
+        <fieldset className="accent-picker" aria-describedby="accent-help">
+          <legend>Hervorhebungsfarbe</legend>
+          <p id="accent-help">Deine Farbe für Buttons und Markierungen. Wirkt sofort und wird auf diesem Gerät gespeichert.</p>
+          <div className="accent-options">{accentPalettes.map(palette => <label className="accent-choice" key={palette.id}>
+            <input className="sr-only" type="radio" name="accent-color" value={palette.id} checked={accent === palette.id} onChange={() => onAccent(palette.id)}/>
+            <span className="accent-chip"><span className="accent-swatch" style={{background:palette.dark.accent,color:palette.dark.ink}} aria-hidden="true">{accent === palette.id && <Check size={17}/>}</span><span>{palette.label}</span></span>
+          </label>)}</div>
+        </fieldset>
         <div className="settings-row"><div><strong>Deine Daten</strong><p>Alle Aufgaben und Themen als JSON exportieren.</p></div><a href="/api/export" className="button secondary compact" download><ArrowDownToLine size={16}/>Exportieren</a></div>
         <div className="settings-row"><div><strong>Aufgaben mitbringen</strong><p>Excel, CSV, Kalenderexporte oder bestehende Google-Termine prüfen und übernehmen.</p></div><button className="button secondary compact" onClick={onImport}><FolderInput size={16}/>Importieren</button></div>
         <div className="settings-row"><div><strong>Spracherfassung</strong><p>{state.voice.enhanced ? 'Erweiterte Transkription über den eingerichteten OpenAI-Zugang.' : 'Spracherkennung über deinen Browser, ohne kostenpflichtige API. Erweiterte OpenAI-Transkription ist optional und kann Kosten verursachen.'}</p></div><span className="subtle-badge">{state.voice.enhanced ? 'Erweitert' : 'Browser'}</span></div>
